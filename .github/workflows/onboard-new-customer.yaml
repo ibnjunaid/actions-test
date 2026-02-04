@@ -7,12 +7,8 @@ on:
         description: 'Name of the customer (will be prefixed with sysult-)'
         required: true
         type: string
-      clusters:
-        description: 'Comma-separated list of clusters (e.g., prod,staging)'
-        required: true
-        type: string
-      apps:
-        description: 'Comma-separated list of apps to include in each cluster (e.g., alloy,grafana)'
+      cluster_app_mapping:
+        description: 'Format: cluster1:app1,app2;cluster2:app3,app4'
         required: true
         type: string
 
@@ -34,8 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           CUSTOMER_NAME: ${{ inputs.customer_name }}
-          CLUSTERS: ${{ inputs.clusters }}
-          APPS: ${{ inputs.apps }}
+          MAPPING: ${{ inputs.cluster_app_mapping }}
         run: |
           REPO_NAME="sysult-${CUSTOMER_NAME}"
           ORG_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f1)
@@ -68,22 +63,32 @@ jobs:
           cp -r "$GITHUB_WORKSPACE/tools" .
           
           # Create clusters and copy apps
-          echo "Creating clusters and copying apps..."
-          IFS=',' read -ra CLUSTER_ARRAY <<< "${CLUSTERS}"
-          IFS=',' read -ra APP_ARRAY <<< "${APPS}"
-
+          echo "Creating clusters and copying apps from mapping..."
+          
+          # Process each cluster segment (split by semicolon)
+          IFS=';' read -ra SEGMENTS <<< "${MAPPING}"
           mkdir -p clusters
 
-          for cluster in "${CLUSTER_ARRAY[@]}"; do
-            cluster=$(echo "$cluster" | xargs) # trim whitespace
-            echo "Processing cluster: ${cluster}"
-            mkdir -p "clusters/${cluster}"
+          for segment in "${SEGMENTS[@]}"; do
+            segment=$(echo "$segment" | xargs) # trim whitespace
+            if [ -z "$segment" ]; then continue; fi
+
+            # Split cluster name from apps (split by colon)
+            CLUSTER_NAME=$(echo "$segment" | cut -d':' -f1 | xargs)
+            APPS_LIST=$(echo "$segment" | cut -d':' -f2 | xargs)
+
+            echo "Processing cluster: ${CLUSTER_NAME}"
+            mkdir -p "clusters/${CLUSTER_NAME}"
             
+            # Process each app for this cluster (split by comma)
+            IFS=',' read -ra APP_ARRAY <<< "${APPS_LIST}"
             for app in "${APP_ARRAY[@]}"; do
               app=$(echo "$app" | xargs) # trim whitespace
+              if [ -z "$app" ]; then continue; fi
+
               if [ -d "$GITHUB_WORKSPACE/apps/${app}" ]; then
-                echo "  Copying app: ${app}"
-                cp -r "$GITHUB_WORKSPACE/apps/${app}" "clusters/${cluster}/"
+                echo "  Copying app: ${app} to clusters/${CLUSTER_NAME}/"
+                cp -r "$GITHUB_WORKSPACE/apps/${app}" "clusters/${CLUSTER_NAME}/"
               else
                 echo "  Warning: App ${app} not found in catalog"
               fi
