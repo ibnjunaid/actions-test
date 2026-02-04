@@ -1,0 +1,96 @@
+name: onboard new customer
+
+on:
+  workflow_dispatch:
+    inputs:
+      customer_name:
+        description: 'Name of the customer (will be prefixed with sysult-)'
+        required: true
+        type: string
+      clusters:
+        description: 'Comma-separated list of clusters (e.g., prod,staging)'
+        required: true
+        type: string
+      apps:
+        description: 'Comma-separated list of apps to include in each cluster (e.g., alloy,grafana)'
+        required: true
+        type: string
+
+jobs:
+  create-repo:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Source Catalog
+        uses: actions/checkout@v4
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and Populate Customer Repo
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          CUSTOMER_NAME: ${{ inputs.customer_name }}
+          CLUSTERS: ${{ inputs.clusters }}
+          APPS: ${{ inputs.apps }}
+        run: |
+          REPO_NAME="sysult-${CUSTOMER_NAME}"
+          ORG_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f1)
+          FULL_REPO_PATH="${ORG_NAME}/${REPO_NAME}"
+
+          echo "Creating repository: ${FULL_REPO_PATH}"
+          
+          # Create the new repository (private by default)
+          gh repo create "${FULL_REPO_PATH}" --private --confirm || echo "Repository might already exist"
+
+          # Create a temporary directory for the new repo
+          TEMP_DIR=$(mktemp -d)
+          gh repo clone "${FULL_REPO_PATH}" "${TEMP_DIR}"
+
+          cd "${TEMP_DIR}"
+
+          # Initialize with a dummy commit if empty
+          if [ ! -d ".git" ]; then
+             echo "Failed to clone or repo not initialized"
+             exit 1
+          fi
+
+          # Copy core files from the source catalog (which is at $GITHUB_WORKSPACE)
+          echo "Copying core files..."
+          cp "$GITHUB_WORKSPACE/Makefile" .
+          cp "$GITHUB_WORKSPACE/go.mod" .
+          cp "$GITHUB_WORKSPACE/go.sum" .
+          cp -r "$GITHUB_WORKSPACE/internal" .
+          cp -r "$GITHUB_WORKSPACE/scripts" .
+          cp -r "$GITHUB_WORKSPACE/tools" .
+          
+          # Create clusters and copy apps
+          echo "Creating clusters and copying apps..."
+          IFS=',' read -ra CLUSTER_ARRAY <<< "${CLUSTERS}"
+          IFS=',' read -ra APP_ARRAY <<< "${APPS}"
+
+          mkdir -p clusters
+
+          for cluster in "${CLUSTER_ARRAY[@]}"; do
+            cluster=$(echo "$cluster" | xargs) # trim whitespace
+            echo "Processing cluster: ${cluster}"
+            mkdir -p "clusters/${cluster}"
+            
+            for app in "${APP_ARRAY[@]}"; do
+              app=$(echo "$app" | xargs) # trim whitespace
+              if [ -d "$GITHUB_WORKSPACE/apps/${app}" ]; then
+                echo "  Copying app: ${app}"
+                cp -r "$GITHUB_WORKSPACE/apps/${app}" "clusters/${cluster}/"
+              else
+                echo "  Warning: App ${app} not found in catalog"
+              fi
+            done
+          done
+
+          # Commit and Push
+          git add .
+          git commit -m "Initial setup for customer ${CUSTOMER_NAME}" || echo "No changes to commit"
+          git push origin main || git push origin master
