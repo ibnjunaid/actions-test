@@ -32,20 +32,13 @@ jobs:
           CUSTOMER_NAME: ${{ inputs.customer_name }}
           MAPPING: ${{ inputs.cluster_app_mapping }}
         run: |
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "Error: GH_TOKEN (ORG_ADMIN_TOKEN secret) is not set."
-            exit 1
-          fi
-
           REPO_NAME="sysult-${CUSTOMER_NAME}"
           ORG_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f1)
           FULL_REPO_PATH="${ORG_NAME}/${REPO_NAME}"
 
           echo "Creating repository: ${FULL_REPO_PATH}"
           
-          # Create the new repository (private by default)
-          # Removed deprecated --confirm flag. gh repo create is non-interactive in CI by default if flags are provided.
-          gh repo create "${FULL_REPO_PATH}" --private || echo "Repository might already exist or creation failed"
+          gh repo create "${FULL_REPO_PATH}" --private || echo "Repository might already exist"
 
           # Create a temporary directory for the new repo
           TEMP_DIR=$(mktemp -d)
@@ -101,7 +94,14 @@ jobs:
             done
           done
 
+          # Configure remote with token for authentication
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${FULL_REPO_PATH}.git"
+
           # Commit and Push
           git add .
           git commit -m "Initial setup for customer ${CUSTOMER_NAME}" || echo "No changes to commit"
-          git push origin main || git push origin master
+          
+          # Detect current branch and push it
+          CURRENT_BRANCH=$(git branch --show-current)
+          if [ -z "$CURRENT_BRANCH" ]; then CURRENT_BRANCH="main"; fi
+          git push origin "$CURRENT_BRANCH"
