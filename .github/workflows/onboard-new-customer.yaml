@@ -1,5 +1,7 @@
 name: onboard new customer
 
+run-name: "onboarding customer ${{ inputs.customer_name }}"
+
 on:
   workflow_dispatch:
     inputs:
